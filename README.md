@@ -10,6 +10,8 @@ The AWS Bedrock Knowledge Base Function connects OpenWebUI to your AWS Bedrock K
 - Retrieve relevant information from your documents
 - Generate AI responses based on the retrieved information
 - Maintain conversation context for more coherent interactions
+- Optionally assume an IAM role for authentication
+- Support custom VPC endpoints for private access
 
 ## Installation
 
@@ -36,9 +38,15 @@ To test the function locally:
    DATA_SOURCE_ID=your_data_source_id
 
    # Optional Model Configuration
-   MODEL_ID=anthropic.claude-3-sonnet-20240229-v1:0
-   NUMBER_OF_RESULTS=10
-   ```
+  MODEL_ID=anthropic.claude-3-sonnet-20240229-v1:0
+  NUMBER_OF_RESULTS=10
+  # Optional VPC Endpoint configuration
+  BEDROCK_RUNTIME_ENDPOINT_URL=https://your-runtime-endpoint
+  BEDROCK_AGENT_ENDPOINT_URL=https://your-agent-endpoint
+  # Optional Assume Role configuration
+  AWS_ASSUME_ROLE_ARN=arn:aws:iam::123456789012:role/YourRole
+  AWS_ASSUME_ROLE_SESSION_NAME=bedrock-kb-session
+  ```
 
 3. Run the test script:
    ```
@@ -71,6 +79,10 @@ The function provides the following configuration options (valves):
 | `max_history_messages` | Maximum number of previous messages to include in history | 10 |
 | `emit_interval` | Interval in seconds between status emissions | 2.0 |
 | `enable_status_indicator` | Enable or disable status indicator emissions | true |
+| `assume_role_arn` | ARN of an IAM role to assume instead of using direct credentials | "" |
+| `assume_role_session_name` | Session name to use when assuming the IAM role | "bedrock-kb-session" |
+| `bedrock_runtime_endpoint_url` | Custom endpoint URL for bedrock-runtime | "" |
+| `bedrock_agent_endpoint_url` | Custom endpoint URL for bedrock-agent-runtime | "" |
 
 ## Required AWS Permissions
 
