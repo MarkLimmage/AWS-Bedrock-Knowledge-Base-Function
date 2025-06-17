@@ -2,7 +2,7 @@
 title: AWS Bedrock Knowledge Base Function
 author: Aaron Bolton
 author_url: https://github.com/d3v0ps-cloud/AWS-Bedrock-Knowledge-Base-Function
-version: 0.1.1
+version: 0.1.3
 description: Integration with AWS Bedrock Knowledge Base for OpenWebUI only support for Claude 3 models.
 This module defines a Pipe class that utilizes AWS Bedrock Knowledge Base for retrieving information
 from your documents and providing AI-generated responses.
@@ -84,6 +84,22 @@ class Pipe:
         enable_status_indicator: bool = Field(
             default=True, description="Enable or disable status indicator emissions"
         )
+        assume_role_arn: str = Field(
+            default="",
+            description="Optional IAM role ARN to assume instead of using direct credentials",
+        )
+        assume_role_session_name: str = Field(
+            default="bedrock-kb-session",
+            description="Session name when assuming the IAM role",
+        )
+        bedrock_runtime_endpoint_url: str = Field(
+            default="",
+            description="Custom endpoint URL for bedrock-runtime (VPC Endpoint support)",
+        )
+        bedrock_agent_endpoint_url: str = Field(
+            default="",
+            description="Custom endpoint URL for bedrock-agent-runtime (VPC Endpoint support)",
+        )
         
         @validator('temperature')
         def validate_temperature(cls, v):
@@ -137,10 +153,35 @@ class Pipe:
                 session_kwargs['aws_session_token'] = self.valves.aws_session_token
                 
             session = boto3.Session(**session_kwargs)
-            
+
+            # If an assume role ARN is provided, assume the role to obtain temporary credentials
+            if self.valves.assume_role_arn:
+                try:
+                    sts_client = session.client('sts')
+                    assumed = sts_client.assume_role(
+                        RoleArn=self.valves.assume_role_arn,
+                        RoleSessionName=self.valves.assume_role_session_name,
+                    )
+                    credentials = assumed['Credentials']
+                    session = boto3.Session(
+                        aws_access_key_id=credentials['AccessKeyId'],
+                        aws_secret_access_key=credentials['SecretAccessKey'],
+                        aws_session_token=credentials['SessionToken'],
+                        region_name=self.valves.aws_region,
+                    )
+                except Exception as e:
+                    raise Exception(f"Failed to assume role: {str(e)}")
+
             try:
-                self.bedrock_client = session.client('bedrock-runtime')
-                self.bedrock_agent_client = session.client('bedrock-agent-runtime')
+                runtime_kwargs = {}
+                agent_kwargs = {}
+                if self.valves.bedrock_runtime_endpoint_url:
+                    runtime_kwargs['endpoint_url'] = self.valves.bedrock_runtime_endpoint_url
+                if self.valves.bedrock_agent_endpoint_url:
+                    agent_kwargs['endpoint_url'] = self.valves.bedrock_agent_endpoint_url
+
+                self.bedrock_client = session.client('bedrock-runtime', **runtime_kwargs)
+                self.bedrock_agent_client = session.client('bedrock-agent-runtime', **agent_kwargs)
                 self._clients_initialized = True
             except Exception as e:
                 self._clients_initialized = False
