@@ -84,6 +84,29 @@ The function provides the following configuration options (valves):
 | `bedrock_runtime_endpoint_url` | Custom endpoint URL for bedrock-runtime | "" |
 | `bedrock_agent_endpoint_url` | Custom endpoint URL for bedrock-agent-runtime | "" |
 
+### Using VPC Endpoints
+
+If your environment requires private connectivity, create VPC interface endpoints for
+`bedrock-runtime` and `bedrock-agent-runtime` and specify their URLs:
+
+```bash
+BEDROCK_RUNTIME_ENDPOINT_URL=https://vpce-xxxxxxxxxxxx.your-region.vpce.amazonaws.com
+BEDROCK_AGENT_ENDPOINT_URL=https://vpce-yyyyyyyyyyyy.your-region.vpce.amazonaws.com
+```
+
+All Bedrock API calls will be routed through these endpoints.
+
+### Assuming an IAM Role
+
+To use a cross-account role, provide the role ARN and an optional session name:
+
+```bash
+AWS_ASSUME_ROLE_ARN=arn:aws:iam::111122223333:role/BedrockKbRole
+AWS_ASSUME_ROLE_SESSION_NAME=kb-session
+```
+
+The function will call STS to obtain temporary credentials before creating the clients.
+
 ## Required AWS Permissions
 
 To use this function, your AWS credentials must have the following permissions:
