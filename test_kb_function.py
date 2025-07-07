@@ -219,11 +219,11 @@ async def test_kb_query(query, debug=False):
 
     # Optional VPC endpoint configuration
     pipe.valves.bedrock_runtime_endpoint_url = os.getenv('BEDROCK_RUNTIME_ENDPOINT_URL', "")
-    pipe.valves.bedrock_agent_endpoint_url = os.getenv('BEDROCK_AGENT_ENDPOINT_URL', "")
+    pipe.valves.bedrock_agent_runtime_endpoint_url = os.getenv('BEDROCK_AGENT_RUNTIME_ENDPOINT_URL', "")
     
     # Optional: Configure additional parameters from environment variables
     # Use a model that supports on-demand throughput (Nova Pro requires an inference profile)
-    pipe.valves.model_id = os.getenv('MODEL_ID', "anthropic.claude-3-sonnet-20240229-v1:0")
+    pipe.valves.model_id = os.getenv('MODEL_ID', "anthropic.claude-3-5-sonnet-20240620-v1:0")
     
     pipe.valves.number_of_results = int(os.getenv('NUMBER_OF_RESULTS', 10))  # Increase number of results
     

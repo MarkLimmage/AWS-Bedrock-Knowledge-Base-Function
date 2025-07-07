@@ -48,16 +48,16 @@ class Pipe:
             default="", description="AWS Secret Access Key"
         )
         aws_session_token: str = Field(
-            default="", description="AWS Session Token (optional, for temporary credentials)"
+            default="placeholder", description="AWS Session Token (optional, ignored if set to 'placeholder')"
         )
         aws_region: str = Field(
-            default="eu-west-1", description="AWS Region"
+            default="eu-central-1", description="AWS Region"
         )
         knowledge_base_id: str = Field(
             default="", description="AWS Bedrock Knowledge Base ID"
         )
         model_id: str = Field(
-            default="anthropic.claude-3-sonnet-20240229-v1:0",
+            default="anthropic.claude-3-5-sonnet-20240620-v1:0",
             description="Model ID to use for retrieval"
         )
         max_tokens: int = Field(
@@ -85,8 +85,8 @@ class Pipe:
             default=True, description="Enable or disable status indicator emissions"
         )
         assume_role_arn: str = Field(
-            default="",
-            description="Optional IAM role ARN to assume instead of using direct credentials",
+            default="placeholder",
+            description="Optional IAM role ARN to assume (ignored if set to 'placeholder')",
         )
         assume_role_session_name: str = Field(
             default="bedrock-kb-session",
@@ -96,7 +96,7 @@ class Pipe:
             default="",
             description="Custom endpoint URL for bedrock-runtime (VPC Endpoint support)",
         )
-        bedrock_agent_endpoint_url: str = Field(
+        bedrock_agent_runtime_endpoint_url: str = Field(
             default="",
             description="Custom endpoint URL for bedrock-agent-runtime (VPC Endpoint support)",
         )
@@ -148,14 +148,14 @@ class Pipe:
                 'region_name': self.valves.aws_region
             }
             
-            # Add session token if provided
-            if self.valves.aws_session_token:
+            # Add session token if provided and not placeholder
+            if self.valves.aws_session_token and self.valves.aws_session_token != "placeholder":
                 session_kwargs['aws_session_token'] = self.valves.aws_session_token
                 
             session = boto3.Session(**session_kwargs)
 
-            # If an assume role ARN is provided, assume the role to obtain temporary credentials
-            if self.valves.assume_role_arn:
+            # If an assume role ARN is provided and not placeholder, assume the role to obtain temporary credentials
+            if self.valves.assume_role_arn and self.valves.assume_role_arn != "placeholder":
                 try:
                     sts_client = session.client('sts')
                     assumed = sts_client.assume_role(
@@ -177,8 +177,8 @@ class Pipe:
                 agent_kwargs = {}
                 if self.valves.bedrock_runtime_endpoint_url:
                     runtime_kwargs['endpoint_url'] = self.valves.bedrock_runtime_endpoint_url
-                if self.valves.bedrock_agent_endpoint_url:
-                    agent_kwargs['endpoint_url'] = self.valves.bedrock_agent_endpoint_url
+                if self.valves.bedrock_agent_runtime_endpoint_url:
+                    agent_kwargs['endpoint_url'] = self.valves.bedrock_agent_runtime_endpoint_url
 
                 self.bedrock_client = session.client('bedrock-runtime', **runtime_kwargs)
                 self.bedrock_agent_client = session.client('bedrock-agent-runtime', **agent_kwargs)
