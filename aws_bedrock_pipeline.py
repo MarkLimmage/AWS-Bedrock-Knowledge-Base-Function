@@ -18,7 +18,6 @@ class Pipeline:
 
         aws_access_key_id: str = Field(default="", description="AWS Access Key ID")
         aws_secret_access_key: str = Field(default="", description="AWS Secret Access Key")
-        aws_session_token: str = Field(default="placeholder", description="AWS Session Token")
         aws_region: str = Field(default="eu-central-1", description="AWS Region")
         knowledge_base_ids: str = Field(default="", description="Semicolon separated knowledge base IDs")
         knowledge_base_names: str = Field(default="", description="Semicolon separated knowledge base names")
@@ -29,8 +28,6 @@ class Pipeline:
         number_of_results: int = Field(default=5, description="Number of results to retrieve")
         bedrock_runtime_endpoint_url: str = Field(default="", description="Custom endpoint for bedrock-runtime")
         bedrock_agent_runtime_endpoint_url: str = Field(default="", description="Custom endpoint for bedrock-agent-runtime")
-        assume_role_arn: str = Field(default="placeholder", description="IAM role ARN to assume")
-        assume_role_session_name: str = Field(default="bedrock-kb-pipeline", description="Assumed role session name")
 
     def __init__(self):
         self.type = "manifold"
@@ -39,7 +36,6 @@ class Pipeline:
             **{
                 "aws_access_key_id": os.getenv("AWS_ACCESS_KEY_ID", ""),
                 "aws_secret_access_key": os.getenv("AWS_SECRET_ACCESS_KEY", ""),
-                "aws_session_token": os.getenv("AWS_SESSION_TOKEN", "placeholder"),
                 "aws_region": os.getenv("AWS_REGION", "eu-central-1"),
                 "knowledge_base_ids": os.getenv("AWS_BEDROCK_KB_IDS", ""),
                 "knowledge_base_names": os.getenv("AWS_BEDROCK_KB_NAMES", ""),
@@ -50,8 +46,6 @@ class Pipeline:
                 "number_of_results": int(os.getenv("NUMBER_OF_RESULTS", 5)),
                 "bedrock_runtime_endpoint_url": os.getenv("BEDROCK_RUNTIME_ENDPOINT_URL", ""),
                 "bedrock_agent_runtime_endpoint_url": os.getenv("BEDROCK_AGENT_RUNTIME_ENDPOINT_URL", ""),
-                "assume_role_arn": os.getenv("AWS_ASSUME_ROLE_ARN", "placeholder"),
-                "assume_role_session_name": os.getenv("AWS_ASSUME_ROLE_SESSION_NAME", "bedrock-kb-pipeline"),
             }
         )
         self._clients_initialized = False
@@ -83,27 +77,11 @@ class Pipeline:
     def _initialize_clients(self) -> None:
         if self._clients_initialized:
             return
-        session_kwargs = {
-            "aws_access_key_id": self.valves.aws_access_key_id,
-            "aws_secret_access_key": self.valves.aws_secret_access_key,
-            "region_name": self.valves.aws_region,
-        }
-        if self.valves.aws_session_token and self.valves.aws_session_token != "placeholder":
-            session_kwargs["aws_session_token"] = self.valves.aws_session_token
-        session = boto3.Session(**session_kwargs)
-        if self.valves.assume_role_arn and self.valves.assume_role_arn != "placeholder":
-            sts_client = session.client("sts")
-            assumed = sts_client.assume_role(
-                RoleArn=self.valves.assume_role_arn,
-                RoleSessionName=self.valves.assume_role_session_name,
-            )
-            creds = assumed["Credentials"]
-            session = boto3.Session(
-                aws_access_key_id=creds["AccessKeyId"],
-                aws_secret_access_key=creds["SecretAccessKey"],
-                aws_session_token=creds["SessionToken"],
-                region_name=self.valves.aws_region,
-            )
+        session = boto3.Session(
+            aws_access_key_id=self.valves.aws_access_key_id,
+            aws_secret_access_key=self.valves.aws_secret_access_key,
+            region_name=self.valves.aws_region,
+        )
         runtime_kwargs = {}
         agent_kwargs = {}
         if self.valves.bedrock_runtime_endpoint_url:
