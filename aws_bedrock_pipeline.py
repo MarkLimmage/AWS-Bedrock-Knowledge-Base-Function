@@ -1,3 +1,10 @@
+"""AWS Bedrock pipeline for OpenWebUI
+
+This manifold pipeline allows selecting from multiple Knowledge Bases.
+Configure the available pipelines using the ``AWS_BEDROCK_KB_IDS`` and
+``AWS_BEDROCK_KB_NAMES`` environment variables.
+"""
+
 from typing import List, Union, Generator, Iterator
 from pydantic import BaseModel, Field
 import boto3
@@ -51,7 +58,6 @@ class Pipeline:
         self.bedrock_client = None
         self.bedrock_agent_client = None
         self.set_pipelines()
-        self._initialize_clients()
 
     def set_pipelines(self) -> None:
         ids = [i for i in self.valves.knowledge_base_ids.split(";") if i]
@@ -65,6 +71,7 @@ class Pipeline:
 
     async def on_valves_updated(self):
         self.set_pipelines()
+        self._clients_initialized = False
         self._initialize_clients()
 
     async def on_startup(self):

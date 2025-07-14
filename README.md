@@ -18,6 +18,10 @@ The AWS Bedrock Knowledge Base Function connects OpenWebUI to your AWS Bedrock K
 1. Copy the `aws_bedrock_kb_function.py` file to your OpenWebUI functions directory.
 2. Restart OpenWebUI or reload the functions.
 3. Configure the function with your AWS credentials and Knowledge Base ID.
+4. (Optional) Copy `aws_bedrock_pipeline.py` to your OpenWebUI pipelines directory
+   if you want to select between multiple Knowledge Bases. Set the `AWS_BEDROCK_KB_IDS`
+   and `AWS_BEDROCK_KB_NAMES` environment variables with semicolon-separated values
+   to control which pipelines are available.
 
 ## Testing
 
