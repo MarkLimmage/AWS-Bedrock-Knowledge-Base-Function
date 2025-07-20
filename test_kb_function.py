@@ -212,10 +212,18 @@ async def test_kb_query(query, debug=False):
     pipe.valves.aws_secret_access_key = os.getenv('AWS_SECRET_ACCESS_KEY')
     pipe.valves.aws_region = os.getenv('AWS_REGION')
     pipe.valves.knowledge_base_id = os.getenv('KNOWLEDGE_BASE_ID')
+
+    # Optional assume role configuration
+    pipe.valves.assume_role_arn = os.getenv('AWS_ASSUME_ROLE_ARN', "")
+    pipe.valves.assume_role_session_name = os.getenv('AWS_ASSUME_ROLE_SESSION_NAME', 'bedrock-kb-session')
+
+    # Optional VPC endpoint configuration
+    pipe.valves.bedrock_runtime_endpoint_url = os.getenv('BEDROCK_RUNTIME_ENDPOINT_URL', "")
+    pipe.valves.bedrock_agent_runtime_endpoint_url = os.getenv('BEDROCK_AGENT_RUNTIME_ENDPOINT_URL', "")
     
     # Optional: Configure additional parameters from environment variables
     # Use a model that supports on-demand throughput (Nova Pro requires an inference profile)
-    pipe.valves.model_id = os.getenv('MODEL_ID', "anthropic.claude-3-sonnet-20240229-v1:0")
+    pipe.valves.model_id = os.getenv('MODEL_ID', "anthropic.claude-3-5-sonnet-20240620-v1:0")
     
     pipe.valves.number_of_results = int(os.getenv('NUMBER_OF_RESULTS', 10))  # Increase number of results
     
