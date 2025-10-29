@@ -14,9 +14,14 @@ This file contains example metadata definitions that can be used with the metada
 ```json
 [
     {
-        "key": "created_at",
+        "key": "created_at_iso",
         "type": "STRING",
-        "description": "The timestamp from when the document was created, e.g `2025-09-04T06:39:14Z`"
+        "description": "The timestamp from when the document was created in ISO format, e.g `2025-09-04T06:39:14Z`"
+    },
+    {
+        "key": "created_at_unix",
+        "type": "NUMBER",
+        "description": "The timestamp from when the document was created in Unix epoch format, e.g. 1725430754"
     },
     {
         "key": "source_uri",
@@ -115,15 +120,20 @@ This file contains example metadata definitions that can be used with the metada
 
 ## Example Queries
 
-When metadata filtering is enabled, the system will automatically generate filters for queries like:
+When metadata filtering is enabled, the system will automatically:
+1. Extract date-time references from your query
+2. Convert them to both ISO format and Unix epoch timestamps
+3. Generate appropriate filters using Unix epoch fields for numeric comparisons
 
 ### Social Media Examples
 - "Show me posts from John Smith in August 2025"
-  - Generates filters for `author_name` and `created_at`
+  - Extracts "August 2025" and converts to timestamps
+  - Generates filters for `author_name` and `created_at_unix` using numeric range operators
 - "Find highly engaged posts with more than 100 likes"
-  - Generates filter for `like_count`
-- "Show posts by the Guardian"
-  - Generates filter for `author_handle`
+  - Generates filter for `like_count` with greaterThan operator
+- "Show posts by the Guardian created before September 4, 2025"
+  - Extracts "September 4, 2025" and converts to Unix timestamp
+  - Generates filters for `author_handle` and `created_at_unix` with lessThan operator
 
 ### Document Management Examples
 - "Find Finance department reports from Q1 2025"

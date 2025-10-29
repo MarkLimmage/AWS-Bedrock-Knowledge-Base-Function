@@ -15,6 +15,8 @@ import json
 import boto3
 from botocore.exceptions import ClientError
 from enum import Enum
+from datetime import datetime
+import re
 
 # Constants for model families
 class ModelFamily(str, Enum):
@@ -38,6 +40,51 @@ def extract_event_info(event_emitter) -> Tuple[Optional[str], Optional[str]]:
             message_id = request_info.get("message_id")
             return chat_id, message_id
     return None, None
+
+def parse_datetime_to_formats(datetime_str: str) -> Tuple[Optional[str], Optional[int]]:
+    """
+    Parse a datetime string to both ISO format and Unix epoch timestamp.
+    
+    Args:
+        datetime_str: A datetime string in various formats
+        
+    Returns:
+        Tuple of (iso_format_string, unix_timestamp) or (None, None) if parsing fails
+    """
+    try:
+        # Try common datetime formats
+        formats = [
+            "%Y-%m-%dT%H:%M:%SZ",
+            "%Y-%m-%dT%H:%M:%S.%fZ",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%d",
+            "%d/%m/%Y",
+            "%m/%d/%Y",
+            "%B %d, %Y",
+            "%b %d, %Y",
+            "%Y-%m-%dT%H:%M:%S%z",
+        ]
+        
+        dt = None
+        for fmt in formats:
+            try:
+                dt = datetime.strptime(datetime_str, fmt)
+                break
+            except ValueError:
+                continue
+        
+        if dt is None:
+            return None, None
+            
+        # Convert to ISO format and Unix timestamp
+        iso_format = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        unix_timestamp = int(dt.timestamp())
+        
+        return iso_format, unix_timestamp
+        
+    except Exception as e:
+        print(f"DEBUG - Failed to parse datetime '{datetime_str}': {str(e)}")
+        return None, None
 
 class Pipe:
     class Valves(BaseModel):
@@ -345,6 +392,101 @@ class Pipe:
             # This should never happen due to the check in _get_model_family
             raise ValueError(f"Unsupported model ID: {self.valves.model_id}. Only Claude 3 models are supported.")
 
+    async def _extract_datetime_references(self, query: str) -> Dict[str, Any]:
+        """
+        Extract date-time references from the user query using an LLM.
+        
+        Args:
+            query: The user's question to extract date-time references from
+            
+        Returns:
+            Dictionary containing extracted date-time information with ISO and Unix formats
+        """
+        try:
+            # Create a prompt for extracting date-time references
+            extraction_prompt = f"""Extract any date or time references from the following user query and convert them to a structured format.
+
+User query: {query}
+
+If the query contains date or time references, extract them and provide:
+1. The original date/time expression as it appears in the query
+2. The parsed date/time in ISO 8601 format (e.g., "2025-09-04T06:39:14Z")
+
+Return ONLY valid JSON with no additional text. If no date/time references are found, return an empty array.
+
+Example format:
+[
+    {{
+        "original": "August 2025",
+        "parsed": "2025-08-01T00:00:00Z"
+    }},
+    {{
+        "original": "September 4th, 2025 at 6:39 AM",
+        "parsed": "2025-09-04T06:39:00Z"
+    }}
+]
+
+Extracted date-time references (JSON only):"""
+
+            # Use the filter model for extraction
+            request_body = {
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 512,
+                "temperature": 0.1,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": extraction_prompt
+                    }
+                ]
+            }
+            
+            print(f"DEBUG - Extracting datetime references with model {self.valves.filter_model_id}")
+            
+            model_response = self.bedrock_client.invoke_model(
+                modelId=self.valves.filter_model_id,
+                body=json.dumps(request_body)
+            )
+            
+            # Parse response
+            response_body = json.loads(model_response['body'].read())
+            extraction_text = response_body['content'][0]['text'].strip()
+            
+            print(f"DEBUG - Extracted datetime text: {extraction_text}")
+            
+            # Remove markdown code blocks if present
+            if extraction_text.startswith("```"):
+                extraction_text = extraction_text.split("```")[1]
+                if extraction_text.startswith("json"):
+                    extraction_text = extraction_text[4:]
+                extraction_text = extraction_text.strip()
+            
+            datetime_refs = json.loads(extraction_text)
+            
+            # Process each extracted datetime to add Unix timestamps
+            processed_refs = []
+            for ref in datetime_refs:
+                iso_str = ref.get('parsed')
+                if iso_str:
+                    iso_format, unix_timestamp = parse_datetime_to_formats(iso_str)
+                    if iso_format and unix_timestamp:
+                        processed_refs.append({
+                            'original': ref.get('original', ''),
+                            'iso': iso_format,
+                            'unix': unix_timestamp
+                        })
+            
+            print(f"DEBUG - Processed datetime references: {json.dumps(processed_refs, indent=2)}")
+            
+            return {'datetime_refs': processed_refs}
+            
+        except json.JSONDecodeError as e:
+            print(f"WARNING - Failed to parse datetime extraction: {str(e)}")
+            return {'datetime_refs': []}
+        except Exception as e:
+            print(f"WARNING - Error extracting datetime references: {str(e)}")
+            return {'datetime_refs': []}
+
     async def _generate_metadata_filter(self, query: str) -> Optional[Dict[str, Any]]:
         """
         Generate metadata filters using a lightweight model based on the user query.
@@ -364,13 +506,42 @@ class Pipe:
             if not metadata_defs:
                 return None
             
+            # Extract datetime references from the query
+            datetime_info = await self._extract_datetime_references(query)
+            datetime_refs = datetime_info.get('datetime_refs', [])
+            
+            # Build enhanced query with Unix timestamps and datetime context
+            enhanced_query = query
+            datetime_context = ""
+            
+            if datetime_refs:
+                datetime_context = "\n\nExtracted date-time information:\n"
+                for ref in datetime_refs:
+                    datetime_context += f"- '{ref['original']}' -> ISO: {ref['iso']}, Unix: {ref['unix']}\n"
+                    # Replace original datetime references with both formats in query
+                    enhanced_query = enhanced_query.replace(
+                        ref['original'], 
+                        f"{ref['original']} (ISO: {ref['iso']}, Unix epoch: {ref['unix']})"
+                    )
+            
             # Create a prompt for the filter generation model
             filter_prompt = f"""Given the following metadata field definitions and user query, generate a metadata filter in JSON format that can be used to filter knowledge base results.
 
 Metadata field definitions:
 {json.dumps(metadata_defs, indent=2)}
 
-User query: {query}
+User query: {enhanced_query}{datetime_context}
+
+IMPORTANT INSTRUCTIONS FOR DATE/TIME FILTERING:
+1. When filtering by date/time fields, check if the metadata definitions include both ISO format (STRING type) and Unix epoch (NUMBER type) fields.
+2. For Unix epoch timestamp fields (NUMBER type with names like *_unix, *_timestamp, *_epoch):
+   - Use numeric comparison operators: greaterThan, greaterThanOrEquals, lessThan, lessThanOrEquals
+   - Use the Unix epoch value (integer) from the extracted date-time information above
+   - Example: {{"greaterThan": {{"key": "created_at_unix", "value": 1725430754}}}}
+3. For ISO format date fields (STRING type with names like *_iso, *_date, created_at):
+   - Use string comparison operators if needed, but prefer Unix epoch fields when both are available
+   - Use the ISO format string from the extracted date-time information
+4. Unix epoch fields provide better performance for numeric range queries.
 
 Generate a filter object that matches the AWS Bedrock Knowledge Base filter format. The filter should use operators like "equals", "notEquals", "in", "notIn", "greaterThan", "greaterThanOrEquals", "lessThan", "lessThanOrEquals", "stringContains", and logical operators "andAll" and "orAll".
 
@@ -381,8 +552,8 @@ Return ONLY valid JSON with no additional text or explanation. Example format:
     "andAll": [
         {{
             "lessThan": {{
-                "key": "created_at",
-                "value": "2025-09-04T23:59:59Z"
+                "key": "created_at_unix",
+                "value": 1725494399
             }}
         }},
         {{

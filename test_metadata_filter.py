@@ -103,6 +103,39 @@ def test_filter_with_empty_metadata():
     print(f"  metadata_definitions = {pipe.valves.metadata_definitions}")
     return True
 
+def test_datetime_parsing():
+    """Test the datetime parsing functionality"""
+    print("\n" + "="*80)
+    print("Testing DateTime Parsing")
+    print("="*80)
+    
+    from aws_bedrock_kb_function import parse_datetime_to_formats
+    
+    test_cases = [
+        ("2025-09-04T06:39:14Z", "2025-09-04T06:39:14Z", 1725430754),
+        ("2025-08-01", "2025-08-01T00:00:00Z", 1722470400),
+        ("September 4, 2025", "2025-09-04T00:00:00Z", 1725408000),
+    ]
+    
+    all_passed = True
+    for input_str, expected_iso, expected_unix in test_cases:
+        iso_result, unix_result = parse_datetime_to_formats(input_str)
+        
+        # Check if parsing succeeded
+        if iso_result is None or unix_result is None:
+            print(f"✗ Failed to parse: {input_str}")
+            all_passed = False
+            continue
+            
+        # For ISO format, just check the date part matches
+        if iso_result.startswith(expected_iso[:10]):
+            print(f"✓ Parsed '{input_str}' -> ISO: {iso_result}, Unix: {unix_result}")
+        else:
+            print(f"✗ ISO mismatch for '{input_str}': expected {expected_iso}, got {iso_result}")
+            all_passed = False
+    
+    return all_passed
+
 async def test_filter_generation():
     """Test the metadata filter generation with AWS credentials if available"""
     print("\n" + "="*80)
@@ -125,12 +158,17 @@ async def test_filter_generation():
     pipe.valves.enable_metadata_filtering = True
     pipe.valves.filter_model_id = "anthropic.claude-3-haiku-20240307-v1:0"
     
-    # Set metadata definitions from the problem statement
+    # Set metadata definitions with Unix timestamp support
     metadata_defs = [
         {
-            "key": "created_at",
+            "key": "created_at_iso",
             "type": "STRING",
-            "description": "The timestamp from when the document was created, e.g `2025-09-04T06:39:14Z` "
+            "description": "The timestamp from when the document was created in ISO format, e.g `2025-09-04T06:39:14Z`"
+        },
+        {
+            "key": "created_at_unix",
+            "type": "NUMBER",
+            "description": "The timestamp from when the document was created in Unix epoch format, e.g. 1725430754"
         },
         {
             "key": "author_name",
@@ -206,6 +244,7 @@ async def run_all_tests():
     results['Metadata Parsing'] = test_metadata_parsing()
     results['Filter Disabled'] = test_filter_disabled_returns_none()
     results['Empty Metadata'] = test_filter_with_empty_metadata()
+    results['DateTime Parsing'] = test_datetime_parsing()
     results['Vector Search Config'] = test_vector_search_config()
     
     # Run integration tests if credentials available
