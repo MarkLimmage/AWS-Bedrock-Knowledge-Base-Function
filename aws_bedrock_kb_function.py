@@ -685,29 +685,49 @@ Generated filter (JSON only):"""
             retrieved_results = response.get('retrievalResults', [])
             context = ""
             
-            # Add source information to each result
+            # Build context with metadata information made explicit
             for i, result in enumerate(retrieved_results, 1):
                 if 'content' in result and 'text' in result['content']:
                     content = result['content']['text']
-                    source = ""
+                    
+                    # Start building the document entry
+                    doc_entry = f"[Document {i}]\n"
+                    
+                    # Add metadata if available
+                    if 'metadata' in result and result['metadata']:
+                        metadata = result['metadata']
+                        doc_entry += "Metadata:\n"
+                        for key, value in metadata.items():
+                            doc_entry += f"  - {key}: {value}\n"
+                        doc_entry += "\n"
+                    
+                    # Add source location if available
                     if 'location' in result:
-                        source = f" (Source: {result['location'].get('s3Location', {}).get('uri', 'Unknown')})"
-                    context += f"[Document {i}{source}]\n{content}\n\n"
+                        source_uri = result['location'].get('s3Location', {}).get('uri', 'Unknown')
+                        doc_entry += f"Source: {source_uri}\n\n"
+                    
+                    # Add the actual content
+                    doc_entry += f"Content:\n{content}\n\n"
+                    
+                    context += doc_entry
             
             # If no results were found
             if not context:
                 return "I couldn't find any relevant information in the knowledge base."
             
             # Generate a response using the retrieved context and conversation history
+            # Make the metadata connection explicit in the prompt
             prompt = f"""
             {conversation_history}
             
-            The following information was retrieved from a knowledge base:
+            The following information was retrieved from a knowledge base. Each document includes metadata that provides important context about the document (such as author, creation date, category, etc.) and should be considered when answering the question.
             
             {context}
             
-            Based on this information, please answer the following question:
+            Based on this information and the associated metadata, please answer the following question:
             {query}
+            
+            When answering, consider the metadata to ensure your response is relevant to the specific requirements of the question (e.g., if the question asks about documents from a specific author or time period, use the metadata to verify the document's relevance).
             
             If the information doesn't contain a clear answer, please say so.
             """
