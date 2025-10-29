@@ -15,7 +15,7 @@ import json
 import boto3
 from botocore.exceptions import ClientError
 from enum import Enum
-from datetime import datetime
+from datetime import datetime, timezone
 import re
 
 # Constants for model families
@@ -75,6 +75,10 @@ def parse_datetime_to_formats(datetime_str: str) -> Tuple[Optional[str], Optiona
         
         if dt is None:
             return None, None
+            
+        # Ensure UTC timezone for consistent timestamp conversion
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
             
         # Convert to ISO format and Unix timestamp
         iso_format = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -456,10 +460,12 @@ Extracted date-time references (JSON only):"""
             
             # Remove markdown code blocks if present
             if extraction_text.startswith("```"):
-                extraction_text = extraction_text.split("```")[1]
-                if extraction_text.startswith("json"):
-                    extraction_text = extraction_text[4:]
-                extraction_text = extraction_text.strip()
+                parts = extraction_text.split("```")
+                if len(parts) > 1:
+                    extraction_text = parts[1]
+                    if extraction_text.startswith("json"):
+                        extraction_text = extraction_text[4:]
+                    extraction_text = extraction_text.strip()
             
             datetime_refs = json.loads(extraction_text)
             
@@ -518,10 +524,11 @@ Extracted date-time references (JSON only):"""
                 datetime_context = "\n\nExtracted date-time information:\n"
                 for ref in datetime_refs:
                     datetime_context += f"- '{ref['original']}' -> ISO: {ref['iso']}, Unix: {ref['unix']}\n"
-                    # Replace original datetime references with both formats in query
+                    # Replace original datetime references with both formats in query (only first occurrence)
                     enhanced_query = enhanced_query.replace(
                         ref['original'], 
-                        f"{ref['original']} (ISO: {ref['iso']}, Unix epoch: {ref['unix']})"
+                        f"{ref['original']} (ISO: {ref['iso']}, Unix epoch: {ref['unix']})",
+                        1
                     )
             
             # Create a prompt for the filter generation model
@@ -596,10 +603,12 @@ Generated filter (JSON only):"""
             # Parse the JSON filter
             # Remove markdown code blocks if present
             if filter_text.startswith("```"):
-                filter_text = filter_text.split("```")[1]
-                if filter_text.startswith("json"):
-                    filter_text = filter_text[4:]
-                filter_text = filter_text.strip()
+                parts = filter_text.split("```")
+                if len(parts) > 1:
+                    filter_text = parts[1]
+                    if filter_text.startswith("json"):
+                        filter_text = filter_text[4:]
+                    filter_text = filter_text.strip()
             
             metadata_filter = json.loads(filter_text)
             
