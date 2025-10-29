@@ -50,6 +50,10 @@ def parse_datetime_to_formats(datetime_str: str) -> Tuple[Optional[str], Optiona
         
     Returns:
         Tuple of (iso_format_string, unix_timestamp) or (None, None) if parsing fails
+        
+    Note:
+        If the input datetime does not have timezone information, UTC is assumed
+        for consistent timestamp conversion.
     """
     try:
         # Try common datetime formats
@@ -89,6 +93,26 @@ def parse_datetime_to_formats(datetime_str: str) -> Tuple[Optional[str], Optiona
     except Exception as e:
         print(f"DEBUG - Failed to parse datetime '{datetime_str}': {str(e)}")
         return None, None
+
+def _remove_markdown_code_blocks(text: str) -> str:
+    """
+    Remove markdown code blocks from text if present.
+    
+    Args:
+        text: Text that may contain markdown code blocks
+        
+    Returns:
+        Text with markdown code blocks removed
+    """
+    text = text.strip()
+    if text.startswith("```"):
+        parts = text.split("```")
+        if len(parts) > 1:
+            text = parts[1]
+            if text.startswith("json"):
+                text = text[4:]
+            text = text.strip()
+    return text
 
 class Pipe:
     class Valves(BaseModel):
@@ -459,13 +483,7 @@ Extracted date-time references (JSON only):"""
             print(f"DEBUG - Extracted datetime text: {extraction_text}")
             
             # Remove markdown code blocks if present
-            if extraction_text.startswith("```"):
-                parts = extraction_text.split("```")
-                if len(parts) > 1:
-                    extraction_text = parts[1]
-                    if extraction_text.startswith("json"):
-                        extraction_text = extraction_text[4:]
-                    extraction_text = extraction_text.strip()
+            extraction_text = _remove_markdown_code_blocks(extraction_text)
             
             datetime_refs = json.loads(extraction_text)
             
@@ -602,13 +620,7 @@ Generated filter (JSON only):"""
             
             # Parse the JSON filter
             # Remove markdown code blocks if present
-            if filter_text.startswith("```"):
-                parts = filter_text.split("```")
-                if len(parts) > 1:
-                    filter_text = parts[1]
-                    if filter_text.startswith("json"):
-                        filter_text = filter_text[4:]
-                    filter_text = filter_text.strip()
+            filter_text = _remove_markdown_code_blocks(filter_text)
             
             metadata_filter = json.loads(filter_text)
             
