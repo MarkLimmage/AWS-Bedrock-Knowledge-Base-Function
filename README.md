@@ -116,9 +116,19 @@ AWS_ASSUME_ROLE_SESSION_NAME=kb-session
 
 The function will call STS to obtain temporary credentials before creating the clients.
 
-### Metadata Filtering
+### Metadata Filtering and Generation Awareness
 
 The function supports automatic metadata filter generation to refine knowledge base queries based on metadata. When enabled, the function uses a lightweight model to analyze the user's query and generate appropriate filters based on your metadata field definitions.
+
+**Important:** The metadata from retrieved documents is **automatically included** in the generation prompt. This ensures the LLM is aware of important context like:
+- Document author and creation dates
+- Document categories and tags
+- Custom metadata fields from your knowledge base
+
+This metadata awareness allows the LLM to:
+- Verify document relevance to specific query requirements (e.g., "documents from John Smith")
+- Provide more accurate responses based on temporal or authorship context
+- Better understand the relationship between retrieved chunks and the original question
 
 To enable metadata filtering:
 
@@ -167,7 +177,8 @@ The filter generation model will automatically create filters like:
 }
 ```
 
-These filters are then applied to the knowledge base retrieval using the `HYBRID` search type, combining both semantic search and metadata filtering for more precise results.
+These filters are then applied to the knowledge base retrieval using the `HYBRID` search type, combining both semantic search and metadata filtering for more precise results. The metadata from filtered results is then explicitly presented to the LLM in the generation prompt for better context awareness.
+
 
 ## Required AWS Permissions
 
