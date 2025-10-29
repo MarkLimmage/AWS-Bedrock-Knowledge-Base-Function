@@ -17,18 +17,37 @@ This implementation adds metadata filter generation functionality AND metadata a
 **Changes to `aws_bedrock_kb_function.py`:**
 
 ```python
-# Before (Task 2): Only content was included
-context += f"[Document {i}{source}]\n{content}\n\n"
+# Before (Task 2): Only content and source were included
+for i, result in enumerate(retrieved_results, 1):
+    if 'content' in result and 'text' in result['content']:
+        content = result['content']['text']
+        source = ""
+        if 'location' in result:
+            source = f" (Source: {result['location'].get('s3Location', {}).get('uri', 'Unknown')})"
+        context += f"[Document {i}{source}]\n{content}\n\n"
 
-# After (Task 3): Metadata is explicitly included
-doc_entry = f"[Document {i}]\n"
-if 'metadata' in result and result['metadata']:
-    doc_entry += "Metadata:\n"
-    for key, value in metadata.items():
-        doc_entry += f"  - {key}: {value}\n"
-    doc_entry += "\n"
-doc_entry += f"Source: {source_uri}\n\n"
-doc_entry += f"Content:\n{content}\n\n"
+# After (Task 3): Metadata is explicitly included and formatted
+for i, result in enumerate(retrieved_results, 1):
+    if 'content' in result and 'text' in result['content']:
+        content = result['content']['text']
+        doc_entry = f"[Document {i}]\n"
+        
+        # Add metadata if available
+        if 'metadata' in result and result['metadata']:
+            metadata = result['metadata']
+            doc_entry += "Metadata:\n"
+            for key, value in metadata.items():
+                doc_entry += f"  - {key}: {value}\n"
+            doc_entry += "\n"
+        
+        # Add source location
+        if 'location' in result:
+            source_uri = result['location'].get('s3Location', {}).get('uri', 'Unknown')
+            doc_entry += f"Source: {source_uri}\n\n"
+        
+        # Add the content
+        doc_entry += f"Content:\n{content}\n\n"
+        context += doc_entry
 ```
 
 The prompt now explicitly instructs the LLM:
@@ -241,7 +260,7 @@ Total: 2/2 tests passed
 - `demo_metadata_filtering.py` (173 lines)
 - `IMPLEMENTATION_SUMMARY.md` (this file)
 
-**Total:** ~1,111 lines of code, tests, and documentation
+**Total:** Approximately 1,200 lines of code, tests, and documentation across all files
 
 ## Supported Filter Operators
 
