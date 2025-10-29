@@ -28,6 +28,9 @@ class Pipeline:
         number_of_results: int = Field(default=5, description="Number of results to retrieve")
         bedrock_runtime_endpoint_url: str = Field(default="", description="Custom endpoint for bedrock-runtime")
         bedrock_agent_runtime_endpoint_url: str = Field(default="", description="Custom endpoint for bedrock-agent-runtime")
+        enable_metadata_filtering: bool = Field(default=False, description="Enable metadata filter generation")
+        filter_model_id: str = Field(default="anthropic.claude-3-haiku-20240307-v1:0", description="Model ID for filter generation")
+        metadata_definitions: str = Field(default="[]", description="JSON array of metadata field definitions")
 
     def __init__(self):
         self.type = "manifold"
@@ -106,6 +109,52 @@ class Pipeline:
                 formatted += f"Assistant: {content}\n\n"
         return formatted + "\n"
 
+    def _generate_metadata_filter(self, query: str) -> Union[dict, None]:
+        """Generate metadata filter using a lightweight model."""
+        if not self.valves.enable_metadata_filtering:
+            return None
+        try:
+            metadata_defs = json.loads(self.valves.metadata_definitions)
+            if not metadata_defs:
+                return None
+            filter_prompt = f"""Given the following metadata field definitions and user query, generate a metadata filter in JSON format that can be used to filter knowledge base results.
+
+Metadata field definitions:
+{json.dumps(metadata_defs, indent=2)}
+
+User query: {query}
+
+Generate a filter object that matches the AWS Bedrock Knowledge Base filter format. The filter should use operators like "equals", "notEquals", "in", "notIn", "greaterThan", "greaterThanOrEquals", "lessThan", "lessThanOrEquals", "stringContains", and logical operators "andAll" and "orAll".
+
+Only generate filters for metadata fields that are clearly relevant to the user query. If no metadata filtering is needed, return an empty object {{}}.
+
+Return ONLY valid JSON with no additional text or explanation.
+
+Generated filter (JSON only):"""
+            request_body = {
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 1024,
+                "temperature": 0.1,
+                "messages": [{"role": "user", "content": filter_prompt}]
+            }
+            model_response = self.bedrock_client.invoke_model(
+                modelId=self.valves.filter_model_id, body=json.dumps(request_body)
+            )
+            response_body = json.loads(model_response["body"].read())
+            filter_text = response_body["content"][0]["text"].strip()
+            if filter_text.startswith("```"):
+                filter_text = filter_text.split("```")[1]
+                if filter_text.startswith("json"):
+                    filter_text = filter_text[4:]
+                filter_text = filter_text.strip()
+            metadata_filter = json.loads(filter_text)
+            if not metadata_filter or metadata_filter == {}:
+                return None
+            return metadata_filter
+        except Exception as e:
+            print(f"WARNING - Error generating metadata filter: {str(e)}")
+            return None
+
     def pipe(
         self, user_message: str, model_id: str, messages: List[dict], body: dict
     ) -> Union[str, Generator[str, None, None], Iterator[str]]:
@@ -113,11 +162,24 @@ class Pipeline:
         self._initialize_clients()
         history = self._format_history(messages)
         try:
+            # Generate metadata filter if enabled
+            metadata_filter = self._generate_metadata_filter(user_message)
+            
+            # Build vector search configuration
+            vector_search_config = {
+                "numberOfResults": self.valves.number_of_results,
+                "overrideSearchType": "HYBRID"
+            }
+            
+            # Add filter if generated
+            if metadata_filter:
+                vector_search_config["filter"] = metadata_filter
+            
             retrieve_resp = self.bedrock_agent_client.retrieve(
                 knowledgeBaseId=model_id,
                 retrievalQuery={"text": user_message},
                 retrievalConfiguration={
-                    "vectorSearchConfiguration": {"numberOfResults": self.valves.number_of_results}
+                    "vectorSearchConfiguration": vector_search_config
                 },
             )
             context = ""
