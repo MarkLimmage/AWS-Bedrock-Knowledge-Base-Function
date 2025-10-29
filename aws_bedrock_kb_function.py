@@ -100,6 +100,17 @@ class Pipe:
             default="",
             description="Custom endpoint URL for bedrock-agent-runtime (VPC Endpoint support)",
         )
+        enable_metadata_filtering: bool = Field(
+            default=False, description="Enable metadata filter generation for knowledge base queries"
+        )
+        filter_model_id: str = Field(
+            default="anthropic.claude-3-haiku-20240307-v1:0",
+            description="Lightweight model ID to use for metadata filter generation"
+        )
+        metadata_definitions: str = Field(
+            default="[]",
+            description="JSON array of metadata field definitions for filter generation"
+        )
         
         @validator('temperature')
         def validate_temperature(cls, v):
@@ -334,6 +345,107 @@ class Pipe:
             # This should never happen due to the check in _get_model_family
             raise ValueError(f"Unsupported model ID: {self.valves.model_id}. Only Claude 3 models are supported.")
 
+    async def _generate_metadata_filter(self, query: str) -> Optional[Dict[str, Any]]:
+        """
+        Generate metadata filters using a lightweight model based on the user query.
+        
+        Args:
+            query: The user's question to generate filters from
+            
+        Returns:
+            Dictionary containing the metadata filter, or None if filtering is disabled or generation fails
+        """
+        if not self.valves.enable_metadata_filtering:
+            return None
+            
+        try:
+            # Parse metadata definitions
+            metadata_defs = json.loads(self.valves.metadata_definitions)
+            if not metadata_defs:
+                return None
+            
+            # Create a prompt for the filter generation model
+            filter_prompt = f"""Given the following metadata field definitions and user query, generate a metadata filter in JSON format that can be used to filter knowledge base results.
+
+Metadata field definitions:
+{json.dumps(metadata_defs, indent=2)}
+
+User query: {query}
+
+Generate a filter object that matches the AWS Bedrock Knowledge Base filter format. The filter should use operators like "equals", "notEquals", "in", "notIn", "greaterThan", "greaterThanOrEquals", "lessThan", "lessThanOrEquals", "stringContains", and logical operators "andAll" and "orAll".
+
+Only generate filters for metadata fields that are clearly relevant to the user query. If no metadata filtering is needed, return an empty object {{}}.
+
+Return ONLY valid JSON with no additional text or explanation. Example format:
+{{
+    "andAll": [
+        {{
+            "lessThan": {{
+                "key": "created_at",
+                "value": "2025-09-04T23:59:59Z"
+            }}
+        }},
+        {{
+            "in": {{
+                "key": "author_name",
+                "value": ["John Smith"]
+            }}
+        }}
+    ]
+}}
+
+Generated filter (JSON only):"""
+
+            # Use the filter model to generate the filter
+            request_body = {
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 1024,
+                "temperature": 0.1,  # Low temperature for more consistent output
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": filter_prompt
+                    }
+                ]
+            }
+            
+            print(f"DEBUG - Generating metadata filter with model {self.valves.filter_model_id}")
+            
+            model_response = self.bedrock_client.invoke_model(
+                modelId=self.valves.filter_model_id,
+                body=json.dumps(request_body)
+            )
+            
+            # Parse response
+            response_body = json.loads(model_response['body'].read())
+            filter_text = response_body['content'][0]['text'].strip()
+            
+            print(f"DEBUG - Generated filter text: {filter_text}")
+            
+            # Parse the JSON filter
+            # Remove markdown code blocks if present
+            if filter_text.startswith("```"):
+                filter_text = filter_text.split("```")[1]
+                if filter_text.startswith("json"):
+                    filter_text = filter_text[4:]
+                filter_text = filter_text.strip()
+            
+            metadata_filter = json.loads(filter_text)
+            
+            # Return None if empty filter
+            if not metadata_filter or metadata_filter == {}:
+                return None
+                
+            print(f"DEBUG - Parsed metadata filter: {json.dumps(metadata_filter, indent=2)}")
+            return metadata_filter
+            
+        except json.JSONDecodeError as e:
+            print(f"WARNING - Failed to parse metadata filter: {str(e)}")
+            return None
+        except Exception as e:
+            print(f"WARNING - Error generating metadata filter: {str(e)}")
+            return None
+
     async def query_knowledge_base(self, query: str, chat_id: Optional[str], conversation_history: str = "") -> str:
         """
         Query the AWS Bedrock Knowledge Base and generate a response.
@@ -353,6 +465,19 @@ class Pipe:
         self._initialize_clients()
         
         try:
+            # Generate metadata filter if enabled
+            metadata_filter = await self._generate_metadata_filter(query)
+            
+            # Build vector search configuration
+            vector_search_config = {
+                'numberOfResults': self.valves.number_of_results,
+                'overrideSearchType': 'HYBRID'
+            }
+            
+            # Add filter if generated
+            if metadata_filter:
+                vector_search_config['filter'] = metadata_filter
+            
             # Query the knowledge base
             response = self.bedrock_agent_client.retrieve(
                 knowledgeBaseId=self.valves.knowledge_base_id,
@@ -360,9 +485,7 @@ class Pipe:
                     'text': query
                 },
                 retrievalConfiguration={
-                    'vectorSearchConfiguration': {
-                        'numberOfResults': self.valves.number_of_results
-                    }
+                    'vectorSearchConfiguration': vector_search_config
                 }
             )
             

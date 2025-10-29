@@ -89,6 +89,9 @@ The function provides the following configuration options (valves):
 | `assume_role_session_name` | Session name to use when assuming the IAM role | "bedrock-kb-session" |
 | `bedrock_runtime_endpoint_url` | VPC Endpoint for: bedrock-runtime (Custom VPCE - leave empty if you don't work with a VPC) | "" |
 | `bedrock_agent_runtime_endpoint_url` | VPC Endpoint for: bedrock-agent-runtime (Custom VPCE - leave empty if you don't work with a VPC) | "" |
+| `enable_metadata_filtering` | Enable metadata filter generation for knowledge base queries | false |
+| `filter_model_id` | Lightweight model ID to use for metadata filter generation | "anthropic.claude-3-haiku-20240307-v1:0" |
+| `metadata_definitions` | JSON array of metadata field definitions for filter generation | "[]" |
 
 ### Using VPC Endpoints
 
@@ -112,6 +115,59 @@ AWS_ASSUME_ROLE_SESSION_NAME=kb-session
 ```
 
 The function will call STS to obtain temporary credentials before creating the clients.
+
+### Metadata Filtering
+
+The function supports automatic metadata filter generation to refine knowledge base queries based on metadata. When enabled, the function uses a lightweight model to analyze the user's query and generate appropriate filters based on your metadata field definitions.
+
+To enable metadata filtering:
+
+1. Set `enable_metadata_filtering` to `true`
+2. Configure `filter_model_id` (default: `anthropic.claude-3-haiku-20240307-v1:0`)
+3. Define your metadata fields in `metadata_definitions` as a JSON array
+
+Example metadata definitions:
+```json
+[
+    {
+        "key": "created_at",
+        "type": "STRING",
+        "description": "The timestamp from when the document was created, e.g `2025-09-04T06:39:14Z`"
+    },
+    {
+        "key": "author_name",
+        "type": "STRING",
+        "description": "The name of the author."
+    },
+    {
+        "key": "like_count",
+        "type": "NUMBER",
+        "description": "The number of times the post has been liked by other users."
+    }
+]
+```
+
+The filter generation model will automatically create filters like:
+```json
+{
+    "andAll": [
+        {
+            "lessThan": {
+                "key": "created_at",
+                "value": "2025-09-04T23:59:59Z"
+            }
+        },
+        {
+            "in": {
+                "key": "author_name",
+                "value": ["John Smith", "Jane Doe"]
+            }
+        }
+    ]
+}
+```
+
+These filters are then applied to the knowledge base retrieval using the `HYBRID` search type, combining both semantic search and metadata filtering for more precise results.
 
 ## Required AWS Permissions
 
