@@ -5,7 +5,6 @@ Demonstration script for metadata filter generation feature.
 This script shows how to configure and use the metadata filtering functionality
 in the AWS Bedrock Knowledge Base function.
 """
-import asyncio
 import json
 from aws_bedrock_kb_function import Pipe
 
@@ -113,8 +112,8 @@ def show_query_examples():
         },
         {
             "query": "Show all posts by the author",
-            "expected_filters": ["role"],
-            "description": "Filters by relationship type"
+            "expected_filters": ["author_name"],
+            "description": "Filters by author name"
         }
     ]
     
