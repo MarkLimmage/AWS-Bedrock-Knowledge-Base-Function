@@ -94,6 +94,41 @@ def parse_datetime_to_formats(datetime_str: str) -> Tuple[Optional[str], Optiona
         print(f"DEBUG - Failed to parse datetime '{datetime_str}': {str(e)}")
         return None, None
 
+def parse_datetime_range(range_str: str) -> Tuple[Optional[str], Optional[int], Optional[str], Optional[int]]:
+    """
+    Parse a datetime range string to ISO formats and Unix epoch timestamps.
+    
+    Args:
+        range_str: A datetime range string in format "from YYYY-MM-DDTHH:MM:SSZ to YYYY-MM-DDTHH:MM:SSZ"
+        
+    Returns:
+        Tuple of (start_iso, start_unix, end_iso, end_unix) or (None, None, None, None) if parsing fails
+        
+    Note:
+        Expects the range format from the LLM extraction prompt.
+    """
+    try:
+        # Match the "from ... to ..." pattern
+        match = re.match(r'from\s+(.+?)\s+to\s+(.+)', range_str.strip(), re.IGNORECASE)
+        if not match:
+            return None, None, None, None
+        
+        start_str = match.group(1).strip()
+        end_str = match.group(2).strip()
+        
+        # Parse both start and end datetimes
+        start_iso, start_unix = parse_datetime_to_formats(start_str)
+        end_iso, end_unix = parse_datetime_to_formats(end_str)
+        
+        if start_iso is None or end_iso is None:
+            return None, None, None, None
+            
+        return start_iso, start_unix, end_iso, end_unix
+        
+    except Exception as e:
+        print(f"DEBUG - Failed to parse datetime range '{range_str}': {str(e)}")
+        return None, None, None, None
+
 def _remove_markdown_code_blocks(text: str) -> str:
     """
     Remove markdown code blocks from text if present.
@@ -428,17 +463,23 @@ class Pipe:
             query: The user's question to extract date-time references from
             
         Returns:
-            Dictionary containing extracted date-time information with ISO and Unix formats
+            Dictionary containing extracted date-time information with ISO and Unix formats as ranges
         """
         try:
             # Create a prompt for extracting date-time references
-            extraction_prompt = f"""Extract any date or time references from the following user query and convert them to a structured format.
+            extraction_prompt = f"""Extract any date or time references from the following user query and convert them to structured date-time ranges.
 
 User query: {query}
 
-If the query contains date or time references, extract them and provide:
-1. The original date/time expression as it appears in the query
-2. The parsed date/time in ISO 8601 format (e.g., "2025-09-04T06:39:14Z")
+If the query contains date or time references, extract them and provide ranges based on the level of detail (granularity) in the reference:
+
+**IMPORTANT: Determine the appropriate range based on granularity:**
+- If YEAR only (e.g., "2025"): from Jan 1 00:00:00 to Dec 31 23:59:59
+- If MONTH (e.g., "August 2025", "March 2025"): from 1st day 00:00:00 to last day 23:59:59
+- If DAY (e.g., "September 4th, 2025"): from 00:00:00 to 23:59:59 that day
+- If HOUR (e.g., "6 AM on Sept 4, 2025"): from XX:00:00 to XX:59:59
+- If MINUTE (e.g., "6:39 AM"): from XX:XX:00 to XX:XX:59
+- If SECOND specified: use exact second for both start and end
 
 Return ONLY valid JSON with no additional text. If no date/time references are found, return an empty array.
 
@@ -446,11 +487,19 @@ Example format:
 [
     {{
         "original": "August 2025",
-        "parsed": "2025-08-01T00:00:00Z"
+        "parsed": "from 2025-08-01T00:00:00Z to 2025-08-31T23:59:59Z"
     }},
     {{
         "original": "September 4th, 2025 at 6:39 AM",
-        "parsed": "2025-09-04T06:39:00Z"
+        "parsed": "from 2025-09-04T06:39:00Z to 2025-09-04T06:39:59Z"
+    }},
+    {{
+        "original": "2025",
+        "parsed": "from 2025-01-01T00:00:00Z to 2025-12-31T23:59:59Z"
+    }},
+    {{
+        "original": "March 15, 2025",
+        "parsed": "from 2025-03-15T00:00:00Z to 2025-03-15T23:59:59Z"
     }}
 ]
 
@@ -487,17 +536,20 @@ Extracted date-time references (JSON only):"""
             
             datetime_refs = json.loads(extraction_text)
             
-            # Process each extracted datetime to add Unix timestamps
+            # Process each extracted datetime range to add Unix timestamps
             processed_refs = []
             for ref in datetime_refs:
-                iso_str = ref.get('parsed')
-                if iso_str:
-                    iso_format, unix_timestamp = parse_datetime_to_formats(iso_str)
-                    if iso_format and unix_timestamp:
+                range_str = ref.get('parsed')
+                if range_str:
+                    # Parse the range string
+                    start_iso, start_unix, end_iso, end_unix = parse_datetime_range(range_str)
+                    if start_iso and end_iso and start_unix is not None and end_unix is not None:
                         processed_refs.append({
                             'original': ref.get('original', ''),
-                            'iso': iso_format,
-                            'unix': unix_timestamp
+                            'start_iso': start_iso,
+                            'start_unix': start_unix,
+                            'end_iso': end_iso,
+                            'end_unix': end_unix
                         })
             
             print(f"DEBUG - Processed datetime references: {json.dumps(processed_refs, indent=2)}")
@@ -539,13 +591,13 @@ Extracted date-time references (JSON only):"""
             datetime_context = ""
             
             if datetime_refs:
-                datetime_context = "\n\nExtracted date-time information:\n"
+                datetime_context = "\n\nExtracted date-time ranges:\n"
                 for ref in datetime_refs:
-                    datetime_context += f"- '{ref['original']}' -> ISO: {ref['iso']}, Unix: {ref['unix']}\n"
-                    # Replace original datetime references with both formats in query (only first occurrence)
+                    datetime_context += f"- '{ref['original']}' -> from {ref['start_iso']} (Unix: {ref['start_unix']}) to {ref['end_iso']} (Unix: {ref['end_unix']})\n"
+                    # Replace original datetime references with range information in query (only first occurrence)
                     enhanced_query = enhanced_query.replace(
                         ref['original'], 
-                        f"{ref['original']} (ISO: {ref['iso']}, Unix epoch: {ref['unix']})",
+                        f"{ref['original']} (from {ref['start_iso']} to {ref['end_iso']})",
                         1
                     )
             
@@ -559,14 +611,21 @@ User query: {enhanced_query}{datetime_context}
 
 IMPORTANT INSTRUCTIONS FOR DATE/TIME FILTERING:
 1. When filtering by date/time fields, check if the metadata definitions include both ISO format (STRING type) and Unix epoch (NUMBER type) fields.
-2. For Unix epoch timestamp fields (NUMBER type with names like *_unix, *_timestamp, *_epoch):
-   - Use numeric comparison operators: greaterThan, greaterThanOrEquals, lessThan, lessThanOrEquals
-   - Use the Unix epoch value (integer) from the extracted date-time information above
-   - Example: {{"greaterThan": {{"key": "created_at_unix", "value": 1725430754}}}}
-3. For ISO format date fields (STRING type with names like *_iso, *_date, created_at):
-   - Use string comparison operators if needed, but prefer Unix epoch fields when both are available
-   - Use the ISO format string from the extracted date-time information
-4. Unix epoch fields provide better performance for numeric range queries.
+2. The extracted date-time ranges above provide start and end times based on the granularity level in the user's query.
+3. For Unix epoch timestamp fields (NUMBER type with names like *_unix, *_timestamp, *_epoch):
+   - Use RANGE conditions with greaterThanOrEquals for the start time and lessThanOrEquals for the end time
+   - Use the Unix epoch values (integers) from the extracted date-time ranges above
+   - Example for "August 2025":
+     {{
+       "andAll": [
+         {{"greaterThanOrEquals": {{"key": "created_at_unix", "value": 1754006400}}}},
+         {{"lessThanOrEquals": {{"key": "created_at_unix", "value": 1756684799}}}}
+       ]
+     }}
+4. For ISO format date fields (STRING type with names like *_iso, *_date, created_at):
+   - Use string comparison operators with the ISO format strings from the ranges
+   - Prefer Unix epoch fields when both are available for better performance
+5. The ranges ensure proper filtering based on the level of detail (minute, hour, day, month, year) implied in the user's query.
 
 Generate a filter object that matches the AWS Bedrock Knowledge Base filter format. The filter should use operators like "equals", "notEquals", "in", "notIn", "greaterThan", "greaterThanOrEquals", "lessThan", "lessThanOrEquals", "stringContains", and logical operators "andAll" and "orAll".
 
@@ -576,9 +635,15 @@ Return ONLY valid JSON with no additional text or explanation. Example format:
 {{
     "andAll": [
         {{
-            "lessThan": {{
+            "greaterThanOrEquals": {{
                 "key": "created_at_unix",
-                "value": 1725494399
+                "value": 1754006400
+            }}
+        }},
+        {{
+            "lessThanOrEquals": {{
+                "key": "created_at_unix",
+                "value": 1756684799
             }}
         }},
         {{
