@@ -2,9 +2,13 @@
 """
 Test script to validate that metadata is properly included in generation prompts.
 
-This test validates Task 3 implementation: ensuring the generation phase is aware
-of the relevance of the retrieved context to the original question by including
-metadata explicitly in the prompt.
+This test validates Task 3 implementation (updated for Task 5): ensuring the generation 
+phase is aware of the relevance of the retrieved context to the original question by 
+including metadata explicitly in the prompt.
+
+Task 5 update: Only relevant metadata is included to optimize token usage.
+- Always included: source_uri, created_at_iso
+- Conditionally included: fields used in metadata filters
 """
 import asyncio
 import json
@@ -14,7 +18,10 @@ from aws_bedrock_kb_function import Pipe
 
 
 async def test_metadata_extraction_and_prompt_construction():
-    """Test that metadata is properly extracted from results and included in prompt"""
+    """Test that metadata is properly extracted from results and included in prompt.
+    
+    Updated for Task 5: Only always-include fields should be present when no filter is used.
+    """
     print("\n" + "="*80)
     print("Testing Metadata Extraction and Prompt Construction")
     print("="*80)
@@ -35,7 +42,8 @@ async def test_metadata_extraction_and_prompt_construction():
                     'author_name': 'John Smith',
                     'created_at_iso': '2025-08-15T10:30:00Z',
                     'created_at_unix': 1723719000,
-                    'category': 'technology'
+                    'category': 'technology',
+                    'source_uri': 's3://my-bucket/docs/ml-guide.pdf'
                 }
             },
             {
@@ -51,7 +59,8 @@ async def test_metadata_extraction_and_prompt_construction():
                     'author_name': 'Jane Doe',
                     'created_at_iso': '2025-09-01T14:00:00Z',
                     'created_at_unix': 1725199200,
-                    'category': 'AI'
+                    'category': 'AI',
+                    'source_uri': 's3://my-bucket/docs/deep-learning.pdf'
                 }
             }
         ]
@@ -100,18 +109,16 @@ async def test_metadata_extraction_and_prompt_construction():
             else:
                 print("✓ Successfully captured prompt sent to model")
                 
-                # Check that metadata is included in the prompt
-                metadata_checks = [
-                    ('author_name', 'John Smith'),
-                    ('author_name', 'Jane Doe'),
+                # Check that always-include metadata is present
+                always_include_checks = [
                     ('created_at_iso', '2025-08-15T10:30:00Z'),
                     ('created_at_iso', '2025-09-01T14:00:00Z'),
-                    ('category', 'technology'),
-                    ('category', 'AI'),
+                    ('source_uri', 's3://my-bucket/docs/ml-guide.pdf'),
+                    ('source_uri', 's3://my-bucket/docs/deep-learning.pdf'),
                 ]
                 
-                print("\nChecking metadata presence in prompt:")
-                for field, value in metadata_checks:
+                print("\nChecking always-include metadata presence in prompt:")
+                for field, value in always_include_checks:
                     if field in captured_prompt and value in captured_prompt:
                         print(f"  ✓ Found {field}: {value}")
                     else:
@@ -132,7 +139,7 @@ async def test_metadata_extraction_and_prompt_construction():
                         print(f"  ✗ Missing content: '{content}'")
                         all_passed = False
                 
-                # Check that source locations are included
+                # Check that source locations are included (via location field)
                 source_checks = [
                     's3://my-bucket/docs/ml-guide.pdf',
                     's3://my-bucket/docs/deep-learning.pdf',
@@ -160,6 +167,24 @@ async def test_metadata_extraction_and_prompt_construction():
                     else:
                         print(f"  ✗ Missing keyword: '{keyword}'")
                         all_passed = False
+                
+                # Task 5 requirement: Non-filter metadata should NOT be included
+                # (author_name, category, created_at_unix should be excluded when no filter is used)
+                non_filter_metadata = [
+                    ('author_name', 'John Smith'),
+                    ('author_name', 'Jane Doe'),
+                    ('category', 'technology'),
+                    ('category', 'AI'),
+                ]
+                
+                print("\nChecking non-filter metadata is correctly excluded:")
+                for field, value in non_filter_metadata:
+                    metadata_pattern = f"  - {field}: {value}"
+                    if metadata_pattern in captured_prompt:
+                        print(f"  ✗ Field {field} should not be included but was found")
+                        all_passed = False
+                    else:
+                        print(f"  ✓ Field {field} correctly excluded")
                 
                 # Print the full prompt for inspection
                 print("\n" + "-"*80)
