@@ -149,6 +149,37 @@ def _remove_markdown_code_blocks(text: str) -> str:
             text = text.strip()
     return text
 
+def _extract_filter_keys(metadata_filter: Optional[Dict[str, Any]]) -> set:
+    """
+    Extract all metadata keys used in a metadata filter.
+    
+    Args:
+        metadata_filter: The metadata filter dictionary
+        
+    Returns:
+        Set of metadata keys used in the filter
+    """
+    if not metadata_filter:
+        return set()
+    
+    keys = set()
+    
+    def extract_keys_recursive(obj):
+        if isinstance(obj, dict):
+            # Check if this dict has a 'key' field (a filter condition)
+            if 'key' in obj:
+                keys.add(obj['key'])
+            # Recursively process all values
+            for value in obj.values():
+                extract_keys_recursive(value)
+        elif isinstance(obj, list):
+            # Recursively process all items in list
+            for item in obj:
+                extract_keys_recursive(item)
+    
+    extract_keys_recursive(metadata_filter)
+    return keys
+
 class Pipe:
     class Valves(BaseModel):
         aws_access_key_id: str = Field(
@@ -750,6 +781,9 @@ Generated filter (JSON only):"""
             retrieved_results = response.get('retrievalResults', [])
             context = ""
             
+            # Extract filter keys to determine which metadata fields to include
+            filter_keys = _extract_filter_keys(metadata_filter)
+            
             # Build context with metadata information made explicit
             for i, result in enumerate(retrieved_results, 1):
                 if 'content' in result and 'text' in result['content']:
@@ -758,13 +792,26 @@ Generated filter (JSON only):"""
                     # Start building the document entry
                     doc_entry = f"[Document {i}]\n"
                     
-                    # Add metadata if available
+                    # Add selective metadata if available
                     if 'metadata' in result and result['metadata']:
                         metadata = result['metadata']
-                        doc_entry += "Metadata:\n"
+                        
+                        # Fields that should always be included
+                        always_include = {'source_uri', 'created_at_iso'}
+                        
+                        # Collect metadata to display
+                        metadata_to_show = {}
                         for key, value in metadata.items():
-                            doc_entry += f"  - {key}: {value}\n"
-                        doc_entry += "\n"
+                            # Include if it's an always-include field or was used in the filter
+                            if key in always_include or key in filter_keys:
+                                metadata_to_show[key] = value
+                        
+                        # Only add metadata section if there's metadata to show
+                        if metadata_to_show:
+                            doc_entry += "Metadata:\n"
+                            for key, value in metadata_to_show.items():
+                                doc_entry += f"  - {key}: {value}\n"
+                            doc_entry += "\n"
                     
                     # Add source location if available
                     if 'location' in result:
