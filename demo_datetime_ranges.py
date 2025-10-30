@@ -124,8 +124,8 @@ def show_filter_example():
     print(f"     End:   {end_iso} (Unix: {end_unix})")
     
     print("\n2. Enhanced query sent to filter model:")
-    print('   "Show me posts from John Smith in August 2025')
-    print(f'    (from {start_iso} to {end_iso})"')
+    print('   "Show me posts from John Smith in August 2025"')
+    print(f'   "(from {start_iso} to {end_iso})"')
     
     print("\n3. Context provided to filter model:")
     print("   Extracted date-time ranges:")
