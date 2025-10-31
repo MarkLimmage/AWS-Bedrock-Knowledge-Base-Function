@@ -123,12 +123,19 @@ This file contains example metadata definitions that can be used with the metada
 When metadata filtering is enabled, the system will automatically:
 1. Extract date-time references from your query
 2. Convert them to both ISO format and Unix epoch timestamps
-3. Generate appropriate filters using Unix epoch fields for numeric comparisons
+3. Extract person names and apply entity resolution
+4. Generate appropriate filters using the extracted information
 
 ### Social Media Examples
 - "Show me posts from John Smith in August 2025"
   - Extracts "August 2025" and converts to timestamps
-  - Generates filters for `author_name` and `created_at_unix` using numeric range operators
+  - Extracts "John Smith" and splits into ["John", "Smith"]
+  - Generates filters for `author_name` (using entity resolution) and `created_at_unix` using numeric range operators
+- "Show me posts from Dr. John Smith"
+  - Extracts "Dr. John Smith", removes title "Dr."
+  - Splits into ["John", "Smith"]
+  - Generates entity resolution filter matching both "John" AND "Smith" in `author_name`
+  - This will match "John Smith", "Smith, John", "Dr. John Smith", "Mr. John Smith", etc.
 - "Find highly engaged posts with more than 100 likes"
   - Generates filter for `like_count` with greaterThan operator
 - "Show posts by the Guardian created before September 4, 2025"
@@ -140,12 +147,17 @@ When metadata filtering is enabled, the system will automatically:
   - Generates filters for `department` and `created_date`
 - "Show confidential documents"
   - Generates filter for `classification`
-- "List all presentations authored by Jane Doe"
-  - Generates filters for `document_type` and `author`
+- "List all presentations authored by Prof. Jane Doe"
+  - Extracts "Prof. Jane Doe", removes title "Prof."
+  - Splits into ["Jane", "Doe"]
+  - Generates entity resolution filter for `author` field
+  - This will match "Jane Doe", "Doe, Jane", "Dr. Jane Doe", etc.
 
 ## Notes
 
 - The filter model will only generate filters for metadata fields that are clearly relevant to the user's query
+- Entity resolution automatically handles name variations by matching individual name elements (first name, last name, etc.)
+- Common titles (Dr., Prof., Mr., Mrs., Ms., Sir, Rev., Capt., etc.) are automatically removed before matching
 - If no relevant metadata filtering is needed, the system will proceed with standard semantic search
 - Filters are combined with semantic search using the HYBRID search type for optimal results
 - The default filter model (`anthropic.claude-3-haiku-20240307-v1:0`) is optimized for low latency and cost
