@@ -149,6 +149,30 @@ def _remove_markdown_code_blocks(text: str) -> str:
             text = text.strip()
     return text
 
+def _sanitize_prompt_input(text: str) -> str:
+    """
+    Sanitize user input before including in prompts to prevent prompt injection.
+    
+    Args:
+        text: User input text to sanitize
+        
+    Returns:
+        Sanitized text safe for inclusion in prompts
+    """
+    if not text:
+        return ""
+    
+    # Remove potential prompt injection patterns
+    # Replace newlines with spaces to prevent multi-line injection
+    sanitized = text.replace('\n', ' ').replace('\r', ' ')
+    
+    # Limit length to prevent extremely long inputs
+    max_length = 2000
+    if len(sanitized) > max_length:
+        sanitized = sanitized[:max_length] + "..."
+    
+    return sanitized.strip()
+
 def parse_name_elements(name_string: str) -> List[str]:
     """
     Parse a name string by removing titles and extracting name elements.
@@ -168,14 +192,25 @@ def parse_name_elements(name_string: str) -> List[str]:
         ['John', 'Smith']
     """
     # Common titles to remove (case-insensitive)
-    titles = [
-        r'\b(Dr|Doctor|Prof|Professor|Mr|Mrs|Ms|Miss|Sir|Madam|Madame|Lord|Lady|Rev|Reverend|Hon|Honorable|Capt|Captain|Col|Colonel|Gen|General|Lt|Lieutenant|Maj|Major|Sgt|Sergeant|Esq|Esquire)\b\.?',
+    # Organized by category for readability
+    common_titles = [
+        'Dr', 'Doctor',
+        'Prof', 'Professor', 
+        'Mr', 'Mrs', 'Ms', 'Miss',
+        'Sir', 'Madam', 'Madame', 'Lord', 'Lady',
+        'Rev', 'Reverend',
+        'Hon', 'Honorable',
+        'Capt', 'Captain', 'Col', 'Colonel', 'Gen', 'General',
+        'Lt', 'Lieutenant', 'Maj', 'Major', 'Sgt', 'Sergeant',
+        'Esq', 'Esquire'
     ]
+    
+    # Build regex pattern from title list
+    title_pattern = r'\b(' + '|'.join(common_titles) + r')\b\.?'
     
     # Remove titles from the name string
     cleaned_name = name_string.strip()
-    for title_pattern in titles:
-        cleaned_name = re.sub(title_pattern, '', cleaned_name, flags=re.IGNORECASE)
+    cleaned_name = re.sub(title_pattern, '', cleaned_name, flags=re.IGNORECASE)
     
     # Remove extra whitespace and split into elements
     cleaned_name = re.sub(r'\s+', ' ', cleaned_name).strip()
@@ -644,10 +679,13 @@ Extracted date-time references (JSON only):"""
             Dictionary containing extracted person names with parsed elements
         """
         try:
+            # Sanitize query to prevent prompt injection
+            sanitized_query = _sanitize_prompt_input(query)
+            
             # Create a prompt for extracting person names
             extraction_prompt = f"""Extract any person names from the following user query.
 
-User query: {query}
+User query: {sanitized_query}
 
 If the query contains person names (author names, people of interest, etc.), extract them.
 Return ONLY valid JSON with no additional text. If no person names are found, return an empty array.
@@ -755,27 +793,37 @@ Extracted person names (JSON only):"""
             name_info = await self._extract_entity_names(query)
             name_refs = name_info.get('name_refs', [])
             
+            # Sanitize the query for use in prompts
+            sanitized_query = _sanitize_prompt_input(query)
+            
             # Build enhanced query with Unix timestamps and datetime context
-            enhanced_query = query
+            enhanced_query = sanitized_query
             datetime_context = ""
             
             if datetime_refs:
                 datetime_context = "\n\nExtracted date-time ranges:\n"
                 for ref in datetime_refs:
-                    datetime_context += f"- '{ref['original']}' -> from {ref['start_iso']} (Unix: {ref['start_unix']}) to {ref['end_iso']} (Unix: {ref['end_unix']})\n"
+                    # Sanitize extracted values
+                    original = _sanitize_prompt_input(ref.get('original', ''))
+                    datetime_context += f"- '{original}' -> from {ref['start_iso']} (Unix: {ref['start_unix']}) to {ref['end_iso']} (Unix: {ref['end_unix']})\n"
                     # Replace original datetime references with range information in query (only first occurrence)
-                    enhanced_query = enhanced_query.replace(
-                        ref['original'], 
-                        f"{ref['original']} (from {ref['start_iso']} to {ref['end_iso']})",
-                        1
-                    )
+                    if original in enhanced_query:
+                        enhanced_query = enhanced_query.replace(
+                            original, 
+                            f"{original} (from {ref['start_iso']} to {ref['end_iso']})",
+                            1
+                        )
             
             # Build name context with parsed elements
             name_context = ""
             if name_refs:
                 name_context = "\n\nExtracted person names (titles removed, split into elements):\n"
                 for ref in name_refs:
-                    name_context += f"- '{ref['original']}' -> elements: {ref['elements']} (context: {ref['context']})\n"
+                    # Sanitize extracted values
+                    original = _sanitize_prompt_input(ref.get('original', ''))
+                    elements = ref.get('elements', [])
+                    context = _sanitize_prompt_input(ref.get('context', 'person'))
+                    name_context += f"- '{original}' -> elements: {elements} (context: {context})\n"
             
             # Create a prompt for the filter generation model
             filter_prompt = f"""Given the following metadata field definitions and user query, generate a metadata filter in JSON format that can be used to filter knowledge base results.

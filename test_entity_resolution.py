@@ -6,12 +6,12 @@ import asyncio
 import json
 import os
 import sys
+
+from aws_bedrock_kb_function import Pipe, parse_name_elements
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-
-from aws_bedrock_kb_function import Pipe, parse_name_elements
 
 def test_parse_name_elements():
     """Test the name parsing function with various inputs"""
