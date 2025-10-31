@@ -194,7 +194,7 @@ async def test_citation_first_50_chars():
     assert match, "Quoted preview not found"
     
     preview = match.group(1)
-    # Should be "AAAA...AAA..." which is 50 chars + "..."
+    # Should be "AAAA...AAA..." which is 50 chars + "..." (53 total)
     assert len(preview) <= 53, f"Preview too long: {len(preview)} chars"
     assert preview.endswith("..."), "Preview should end with ..."
     

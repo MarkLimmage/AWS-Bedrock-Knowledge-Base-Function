@@ -182,8 +182,8 @@ async def demo_long_chunk_truncation():
     
     answer = "This demonstrates truncation."
     
-    # Create a very long chunk text
-    long_text = "A" * 200 + " This is a very long chunk of text that will be truncated in the citation preview."
+    # Create a very long chunk text (realistic content to demonstrate truncation)
+    long_text = "Natural language processing (NLP) is a subfield of linguistics, computer science, and artificial intelligence concerned with the interactions between computers and human language, in particular how to program computers to process and analyze large amounts of natural language data."
     
     retrieved_results = [
         {

@@ -835,21 +835,29 @@ Return ONLY valid JSON with no additional text."""
             # Build the answer with inline citations
             annotated_answer = answer
             # Sort citations by length of answer_text (longest first) to avoid partial replacements
+            # This ensures that longer, more specific text matches are replaced before shorter ones
             citations_sorted = sorted(citations, key=lambda x: len(x.get('answer_text', '')), reverse=True)
             
             for citation in citations_sorted:
                 answer_text = citation.get('answer_text', '')
                 chunk_ids = citation.get('chunk_ids', [])
-                if answer_text and chunk_ids:
+                if answer_text and chunk_ids and answer_text in annotated_answer:
                     # Create citation markers like [1,2]
                     citation_marker = '[' + ','.join(str(cid) for cid in chunk_ids) + ']'
                     # Replace the first occurrence only to avoid duplicates
+                    # Note: This may insert citations in multiple locations if text appears multiple times
+                    # The model should ideally return unique answer_text snippets
                     annotated_answer = annotated_answer.replace(answer_text, f"{answer_text}{citation_marker}", 1)
             
             # Build the citations list
             if cited_chunks:
                 citation_list = "\n\n---\n**Citations:**\n"
                 for chunk_id in sorted(cited_chunks):
+                    # Validate chunk_id is within bounds (1-indexed)
+                    if chunk_id < 1 or chunk_id > len(chunks_info):
+                        print(f"WARNING - Invalid chunk_id {chunk_id}, skipping")
+                        continue
+                    
                     chunk_info = chunks_info[chunk_id - 1]  # chunk_id is 1-indexed
                     chunk_text = chunk_info['text']
                     source_uri = chunk_info['source_uri']
@@ -863,6 +871,8 @@ Return ONLY valid JSON with no additional text."""
                 
         except Exception as e:
             print(f"WARNING - Error generating citations: {str(e)}")
+            import traceback
+            print(f"DEBUG - Citation generation traceback: {traceback.format_exc()}")
             # Return original answer if citation generation fails
             return answer
 
