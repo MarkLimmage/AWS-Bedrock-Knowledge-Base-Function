@@ -180,6 +180,65 @@ The filter generation model will automatically create filters like:
 
 These filters are then applied to the knowledge base retrieval using the `HYBRID` search type, combining both semantic search and metadata filtering for more precise results. The metadata from filtered results is then explicitly presented to the LLM in the generation prompt for better context awareness.
 
+#### Entity Resolution for Name Filtering
+
+The system includes **automatic entity resolution** for person names in queries. This feature handles variations in how names appear in metadata by:
+
+1. **Extracting person names** from the user query
+2. **Removing titles** (Dr., Prof., Mr., Ms., etc.) 
+3. **Breaking names into elements** (first name, last name, etc.)
+4. **Creating flexible filters** where each name element is matched independently
+
+**Example:**
+
+For a query like: `"Show me posts from Dr. John Smith"`
+
+Traditional approach (exact match):
+```json
+{
+    "in": {
+        "key": "author_name",
+        "value": ["Dr. John Smith"]
+    }
+}
+```
+
+This won't match variations like "John Smith", "Smith, John", or "Mr. John Smith".
+
+**Entity Resolution approach:**
+```json
+{
+    "andAll": [
+        {
+            "in": {
+                "key": "author_name",
+                "value": "John"
+            }
+        },
+        {
+            "in": {
+                "key": "author_name",
+                "value": "Smith"
+            }
+        }
+    ]
+}
+```
+
+This **will** match all variations:
+- ✓ "John Smith"
+- ✓ "Smith, John"
+- ✓ "Mr. John Smith"
+- ✓ "Dr. John Smith"
+- ✓ "John Q. Smith"
+- ✓ "Smith, John Q."
+
+**Benefits:**
+- Reduces false negatives in metadata filtering
+- Handles different name storage formats in metadata
+- Works seamlessly with date/time and other filters
+- Automatically removes common titles (Dr., Prof., Mr., Mrs., Ms., Sir, Rev., etc.)
+
 ### Citation Generation
 
 The function includes **automatic citation generation** to provide references back to source documents in the knowledge base. When enabled (default), the system:
