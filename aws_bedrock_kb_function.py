@@ -149,6 +149,42 @@ def _remove_markdown_code_blocks(text: str) -> str:
             text = text.strip()
     return text
 
+def parse_name_elements(name_string: str) -> List[str]:
+    """
+    Parse a name string by removing titles and extracting name elements.
+    
+    Args:
+        name_string: A name string that may include titles (e.g., "Dr. John Smith", "Prof. Jane Doe")
+        
+    Returns:
+        List of name elements (first name, last name, etc.) with titles removed
+        
+    Examples:
+        >>> parse_name_elements("Dr. John Smith")
+        ['John', 'Smith']
+        >>> parse_name_elements("Prof. Mary Jane Watson")
+        ['Mary', 'Jane', 'Watson']
+        >>> parse_name_elements("John Smith")
+        ['John', 'Smith']
+    """
+    # Common titles to remove (case-insensitive)
+    titles = [
+        r'\b(Dr|Doctor|Prof|Professor|Mr|Mrs|Ms|Miss|Sir|Madam|Madame|Lord|Lady|Rev|Reverend|Hon|Honorable|Capt|Captain|Col|Colonel|Gen|General|Lt|Lieutenant|Maj|Major|Sgt|Sergeant|Esq|Esquire)\b\.?',
+    ]
+    
+    # Remove titles from the name string
+    cleaned_name = name_string.strip()
+    for title_pattern in titles:
+        cleaned_name = re.sub(title_pattern, '', cleaned_name, flags=re.IGNORECASE)
+    
+    # Remove extra whitespace and split into elements
+    cleaned_name = re.sub(r'\s+', ' ', cleaned_name).strip()
+    
+    # Split by whitespace to get name elements
+    name_elements = [elem for elem in cleaned_name.split() if elem]
+    
+    return name_elements
+
 def _extract_filter_keys(metadata_filter: Optional[Dict[str, Any]]) -> set:
     """
     Extract all metadata keys used in a metadata filter.
@@ -597,6 +633,101 @@ Extracted date-time references (JSON only):"""
             print(f"WARNING - Error extracting datetime references: {str(e)}")
             return {'datetime_refs': []}
 
+    async def _extract_entity_names(self, query: str) -> Dict[str, Any]:
+        """
+        Extract person names from the user query using an LLM.
+        
+        Args:
+            query: The user's question to extract person names from
+            
+        Returns:
+            Dictionary containing extracted person names with parsed elements
+        """
+        try:
+            # Create a prompt for extracting person names
+            extraction_prompt = f"""Extract any person names from the following user query.
+
+User query: {query}
+
+If the query contains person names (author names, people of interest, etc.), extract them.
+Return ONLY valid JSON with no additional text. If no person names are found, return an empty array.
+
+Example format:
+[
+    {{
+        "original": "Dr. John Smith",
+        "context": "author"
+    }},
+    {{
+        "original": "Prof. Mary Jane Watson",
+        "context": "person of interest"
+    }},
+    {{
+        "original": "Jane Doe",
+        "context": "author"
+    }}
+]
+
+Note: Include titles (Dr., Prof., Mr., Ms., etc.) if present in the query.
+
+Extracted person names (JSON only):"""
+
+            # Use the filter model for extraction
+            request_body = {
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 512,
+                "temperature": 0.1,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": extraction_prompt
+                    }
+                ]
+            }
+            
+            print(f"DEBUG - Extracting entity names with model {self.valves.filter_model_id}")
+            
+            model_response = self.bedrock_client.invoke_model(
+                modelId=self.valves.filter_model_id,
+                body=json.dumps(request_body)
+            )
+            
+            # Parse response
+            response_body = json.loads(model_response['body'].read())
+            extraction_text = response_body['content'][0]['text'].strip()
+            
+            print(f"DEBUG - Extracted names text: {extraction_text}")
+            
+            # Remove markdown code blocks if present
+            extraction_text = _remove_markdown_code_blocks(extraction_text)
+            
+            name_refs = json.loads(extraction_text)
+            
+            # Process each extracted name to remove titles and get elements
+            processed_names = []
+            for ref in name_refs:
+                original_name = ref.get('original', '')
+                if original_name:
+                    # Parse name elements (removes titles)
+                    name_elements = parse_name_elements(original_name)
+                    if name_elements:
+                        processed_names.append({
+                            'original': original_name,
+                            'elements': name_elements,
+                            'context': ref.get('context', 'person')
+                        })
+            
+            print(f"DEBUG - Processed entity names: {json.dumps(processed_names, indent=2)}")
+            
+            return {'name_refs': processed_names}
+            
+        except json.JSONDecodeError as e:
+            print(f"WARNING - Failed to parse name extraction: {str(e)}")
+            return {'name_refs': []}
+        except Exception as e:
+            print(f"WARNING - Error extracting entity names: {str(e)}")
+            return {'name_refs': []}
+
     async def _generate_metadata_filter(self, query: str) -> Optional[Dict[str, Any]]:
         """
         Generate metadata filters using a lightweight model based on the user query.
@@ -620,6 +751,10 @@ Extracted date-time references (JSON only):"""
             datetime_info = await self._extract_datetime_references(query)
             datetime_refs = datetime_info.get('datetime_refs', [])
             
+            # Extract entity names from the query
+            name_info = await self._extract_entity_names(query)
+            name_refs = name_info.get('name_refs', [])
+            
             # Build enhanced query with Unix timestamps and datetime context
             enhanced_query = query
             datetime_context = ""
@@ -635,13 +770,20 @@ Extracted date-time references (JSON only):"""
                         1
                     )
             
+            # Build name context with parsed elements
+            name_context = ""
+            if name_refs:
+                name_context = "\n\nExtracted person names (titles removed, split into elements):\n"
+                for ref in name_refs:
+                    name_context += f"- '{ref['original']}' -> elements: {ref['elements']} (context: {ref['context']})\n"
+            
             # Create a prompt for the filter generation model
             filter_prompt = f"""Given the following metadata field definitions and user query, generate a metadata filter in JSON format that can be used to filter knowledge base results.
 
 Metadata field definitions:
 {json.dumps(metadata_defs, indent=2)}
 
-User query: {enhanced_query}{datetime_context}
+User query: {enhanced_query}{datetime_context}{name_context}
 
 IMPORTANT INSTRUCTIONS FOR DATE/TIME FILTERING:
 1. When filtering by date/time fields, check if the metadata definitions include both ISO format (STRING type) and Unix epoch (NUMBER type) fields.
@@ -660,6 +802,46 @@ IMPORTANT INSTRUCTIONS FOR DATE/TIME FILTERING:
    - Use string comparison operators with the ISO format strings from the ranges
    - Prefer Unix epoch fields when both are available for better performance
 5. The ranges ensure proper filtering based on the level of detail (minute, hour, day, month, year) implied in the user's query.
+
+IMPORTANT INSTRUCTIONS FOR ENTITY NAME FILTERING:
+1. When filtering by person name fields (author_name, poi_name, etc.), use the extracted name elements above.
+2. Each name element (first name, last name, etc.) should be matched independently using the "in" operator.
+3. Combine multiple name elements with "andAll" to ensure all elements are present in the field.
+4. This approach handles variations in name storage (e.g., "Smith, John" vs "John Smith" vs "Dr. John Smith").
+5. Example for "Dr. John Smith" (elements: ["John", "Smith"]):
+   {{
+     "andAll": [
+       {{
+         "in": {{
+           "key": "author_name",
+           "value": "John"
+         }}
+       }},
+       {{
+         "in": {{
+           "key": "author_name",
+           "value": "Smith"
+         }}
+       }}
+     ]
+   }}
+6. For multiple names, use "orAll" to match any of the names:
+   {{
+     "orAll": [
+       {{
+         "andAll": [
+           {{"in": {{"key": "author_name", "value": "John"}}}},
+           {{"in": {{"key": "author_name", "value": "Smith"}}}}
+         ]
+       }},
+       {{
+         "andAll": [
+           {{"in": {{"key": "author_name", "value": "Jane"}}}},
+           {{"in": {{"key": "author_name", "value": "Doe"}}}}
+         ]
+       }}
+     ]
+   }}
 
 Generate a filter object that matches the AWS Bedrock Knowledge Base filter format. The filter should use operators like "equals", "notEquals", "in", "notIn", "greaterThan", "greaterThanOrEquals", "lessThan", "lessThanOrEquals", "stringContains", and logical operators "andAll" and "orAll".
 
@@ -683,7 +865,13 @@ Return ONLY valid JSON with no additional text or explanation. Example format:
         {{
             "in": {{
                 "key": "author_name",
-                "value": ["John Smith"]
+                "value": "John"
+            }}
+        }},
+        {{
+            "in": {{
+                "key": "author_name",
+                "value": "Smith"
             }}
         }}
     ]
