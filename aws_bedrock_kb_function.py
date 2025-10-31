@@ -252,6 +252,9 @@ class Pipe:
             default="[]",
             description="JSON array of metadata field definitions for filter generation"
         )
+        enable_citations: bool = Field(
+            default=True, description="Enable citation generation for knowledge base responses"
+        )
         
         @validator('temperature')
         def validate_temperature(cls, v):
@@ -734,6 +737,145 @@ Generated filter (JSON only):"""
             print(f"WARNING - Error generating metadata filter: {str(e)}")
             return None
 
+    async def _generate_citations(self, answer: str, retrieved_results: List[Dict[str, Any]]) -> str:
+        """
+        Generate citations for the answer by identifying which source chunks support each part.
+        
+        Args:
+            answer: The generated answer text
+            retrieved_results: List of retrieved document chunks with metadata
+            
+        Returns:
+            Answer with inline citations and appended citation list
+        """
+        # Check if citations are enabled
+        if not self.valves.enable_citations:
+            return answer
+            
+        if not retrieved_results or not answer:
+            return answer
+        
+        try:
+            # Build a structured representation of the chunks for the model
+            chunks_info = []
+            for i, result in enumerate(retrieved_results, 1):
+                if 'content' in result and 'text' in result['content']:
+                    chunk_text = result['content']['text']
+                    # Get source URI from metadata or location
+                    source_uri = "Unknown"
+                    if 'metadata' in result and result['metadata']:
+                        source_uri = result['metadata'].get('source_uri', source_uri)
+                    if 'location' in result:
+                        source_uri = result['location'].get('s3Location', {}).get('uri', source_uri)
+                    
+                    chunks_info.append({
+                        'id': i,
+                        'text': chunk_text,
+                        'source_uri': source_uri
+                    })
+            
+            # Create the citation attribution prompt
+            citation_prompt = f"""You are tasked with identifying which source chunks support different parts of an answer.
+
+Answer to analyze:
+{answer}
+
+Source chunks:
+{json.dumps(chunks_info, indent=2)}
+
+For each statement or claim in the answer, identify which source chunk(s) support it. Return a JSON object mapping parts of the answer to chunk IDs.
+
+Format your response as valid JSON with this structure:
+{{
+    "citations": [
+        {{
+            "answer_text": "specific text from the answer",
+            "chunk_ids": [1, 2]
+        }}
+    ]
+}}
+
+Only cite chunks that directly support the statement. If a statement is not supported by any chunk, don't include it.
+Return ONLY valid JSON with no additional text."""
+
+            # Call the model for citation attribution
+            request_body = {
+                "anthropic_version": "bedrock-2023-05-31",
+                "max_tokens": 2048,
+                "temperature": 0.1,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": citation_prompt
+                    }
+                ]
+            }
+            
+            model_response = self.bedrock_client.invoke_model(
+                modelId=self.valves.filter_model_id,
+                body=json.dumps(request_body)
+            )
+            
+            response_body = json.loads(model_response['body'].read())
+            citation_text = response_body['content'][0]['text'].strip()
+            
+            # Remove markdown code blocks if present
+            citation_text = _remove_markdown_code_blocks(citation_text)
+            
+            # Parse the citation mappings
+            citation_data = json.loads(citation_text)
+            citations = citation_data.get('citations', [])
+            
+            # Track which chunks are actually cited
+            cited_chunks = set()
+            for citation in citations:
+                chunk_ids = citation.get('chunk_ids', [])
+                cited_chunks.update(chunk_ids)
+            
+            # Build the answer with inline citations
+            annotated_answer = answer
+            # Sort citations by length of answer_text (longest first) to avoid partial replacements
+            # This ensures that longer, more specific text matches are replaced before shorter ones
+            citations_sorted = sorted(citations, key=lambda x: len(x.get('answer_text', '')), reverse=True)
+            
+            for citation in citations_sorted:
+                answer_text = citation.get('answer_text', '')
+                chunk_ids = citation.get('chunk_ids', [])
+                if answer_text and chunk_ids and answer_text in annotated_answer:
+                    # Create citation markers like [1,2]
+                    citation_marker = '[' + ','.join(str(cid) for cid in chunk_ids) + ']'
+                    # Replace the first occurrence only to avoid duplicates
+                    # Note: This may insert citations in multiple locations if text appears multiple times
+                    # The model should ideally return unique answer_text snippets
+                    annotated_answer = annotated_answer.replace(answer_text, f"{answer_text}{citation_marker}", 1)
+            
+            # Build the citations list
+            if cited_chunks:
+                citation_list = "\n\n---\n**Citations:**\n"
+                for chunk_id in sorted(cited_chunks):
+                    # Validate chunk_id is within bounds (1-indexed)
+                    if chunk_id < 1 or chunk_id > len(chunks_info):
+                        print(f"WARNING - Invalid chunk_id {chunk_id}, skipping")
+                        continue
+                    
+                    chunk_info = chunks_info[chunk_id - 1]  # chunk_id is 1-indexed
+                    chunk_text = chunk_info['text']
+                    source_uri = chunk_info['source_uri']
+                    # Get first 50 characters of chunk text
+                    preview = chunk_text[:50] + "..." if len(chunk_text) > 50 else chunk_text
+                    citation_list += f"{chunk_id}. \"{preview}\" - [{source_uri}]({source_uri})\n"
+                
+                return annotated_answer + citation_list
+            else:
+                return answer
+                
+        except Exception as e:
+            print(f"WARNING - Error generating citations: {str(e)}")
+            import traceback
+            print(f"DEBUG - Citation generation traceback: {traceback.format_exc()}")
+            # Return original answer if citation generation fails
+            return answer
+
     async def query_knowledge_base(self, query: str, chat_id: Optional[str], conversation_history: str = "") -> str:
         """
         Query the AWS Bedrock Knowledge Base and generate a response.
@@ -857,7 +999,12 @@ Generated filter (JSON only):"""
                 response_body = json.loads(model_response['body'].read())
                 print(f"DEBUG - Raw response from model: {json.dumps(response_body)}")
                 
-                return self._parse_model_response(response_body)
+                answer = self._parse_model_response(response_body)
+                
+                # Generate citations for the answer
+                answer_with_citations = await self._generate_citations(answer, retrieved_results)
+                
+                return answer_with_citations
                 
             except ClientError as e:
                 error_message = str(e)

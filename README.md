@@ -92,6 +92,7 @@ The function provides the following configuration options (valves):
 | `enable_metadata_filtering` | Enable metadata filter generation for knowledge base queries | false |
 | `filter_model_id` | Lightweight model ID to use for metadata filter generation | "anthropic.claude-3-haiku-20240307-v1:0" |
 | `metadata_definitions` | JSON array of metadata field definitions for filter generation | "[]" |
+| `enable_citations` | Enable automatic citation generation for knowledge base responses | true |
 
 ### Using VPC Endpoints
 
@@ -178,6 +179,40 @@ The filter generation model will automatically create filters like:
 ```
 
 These filters are then applied to the knowledge base retrieval using the `HYBRID` search type, combining both semantic search and metadata filtering for more precise results. The metadata from filtered results is then explicitly presented to the LLM in the generation prompt for better context awareness.
+
+### Citation Generation
+
+The function includes **automatic citation generation** to provide references back to source documents in the knowledge base. When enabled (default), the system:
+
+1. **Identifies Source Attributions**: After generating an answer, the system uses an AI model to analyze which source chunks support each part of the answer.
+
+2. **Inserts Inline Citations**: References are inserted directly into the answer text using numbered markers (e.g., `[1]`, `[2]`).
+
+3. **Appends Citation List**: A numbered list of citations is added to the bottom of the answer, with each citation containing:
+   - The first 50 characters of the source chunk text (as a preview)
+   - The source URI as a hyperlink
+
+**Example output:**
+
+```
+Machine learning is a subset of AI[1]. Deep learning uses neural networks[2] to 
+process complex patterns in data.
+
+---
+**Citations:**
+1. "Machine learning is a subset of artificial intelli..." - [s3://my-bucket/ml-guide.pdf](s3://my-bucket/ml-guide.pdf)
+2. "Deep learning is a specialized subset of machine l..." - [s3://my-bucket/dl-intro.pdf](s3://my-bucket/dl-intro.pdf)
+```
+
+To disable citation generation:
+```python
+pipe.valves.enable_citations = False
+```
+
+**Benefits:**
+- Provides transparency by showing which sources support each claim
+- Enables users to verify information and explore source documents
+- Helps identify the most relevant documents in your knowledge base
 
 
 ## Required AWS Permissions
